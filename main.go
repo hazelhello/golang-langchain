@@ -1,59 +1,52 @@
-package chain
+package main
 
 import (
-	"strings"
-	"text/template"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	
+	"github.com/hazel/golang-langchain/pkg/chain" // 替换为实际模块路径
 )
 
-type Chain struct {
-	templates    map[string]*template.Template
-	cache        CacheProvider
-	llmClient    LLMClient
-}
-
-// 初始化链
-func NewChain() *Chain {
-	return &Chain{
-		templates: make(map[string]*template.Template),
-		cache:     NewRedisCache("localhost:6379"),
-		llmClient: NewOpenAIClient(os.Getenv("OPENAI_KEY")),
+func main() {
+	// 1. 初始化链式处理器
+	myChain := chain.NewChain()
+	
+	// 2. 加载初始模板
+	initialTpl := `你是一个{{.Expert}}，请用{{.Level}}级别解释：{{.Question}}`
+	if err := myChain.AddTemplate("explain", initialTpl); err != nil {
+		log.Fatal("初始模板加载失败: ", err)
 	}
-}
-
-// 添加模板
-func (c *Chain) AddTemplate(name, tplText string) error {
-	tpl, err := template.New(name).Parse(tplText)
-	if err != nil {
-		return err
-	}
-	c.templates[name] = tpl
-	return nil
-}
-
-// 执行链式调用
-func (c *Chain) Run(templateName string, inputs map[string]interface{}) (string, error) {
-	// 1. 渲染Prompt
-	var prompt strings.Builder
-	if tpl, exists := c.templates[templateName]; exists {
-		if err := tpl.Execute(&prompt, inputs); err != nil {
-			return "", err
-		}
+	
+	// 3. 启动模板热加载（新增功能调用）
+	tplDir := "./templates"
+	if err := os.MkdirAll(tplDir, 0755); err != nil {
+		log.Printf("⚠️ 创建模板目录失败: %v", err)
+	} else if err := myChain.StartWatching(tplDir); err != nil {
+		log.Printf("⚠️ 模板监控启动失败: %v", err)
 	} else {
-		return "", fmt.Errorf("template not found")
+		log.Printf("👀 正在监控模板目录: %s", tplDir)
 	}
-
-	// 2. 检查缓存
-	if cached, hit := c.cache.Get(prompt.String()); hit {
-		return cached, nil
+	
+	// 4. 示例调用
+	inputs := map[string]interface{}{
+		"Expert":   "量子物理学家",
+		"Level":    "科普级",
+		"Question": "量子隧穿效应",
 	}
-
-	// 3. 调用LLM
-	response, err := c.llmClient.Call(prompt.String())
+	
+	// 执行链式调用
+	rawOutput, err := myChain.Run("explain", inputs)
 	if err != nil {
-		return "", err
+		log.Fatal("执行失败: ", err)
 	}
-
-	// 4. 缓存结果
-	c.cache.Set(prompt.String(), response)
-	return response, nil
+	
+	// 尝试结构化解析（新增处理逻辑）
+	if parsed, err := chain.ParseJSONOutput(rawOutput); err == nil {
+		fmt.Printf("【结构化输出】\n回答: %s\n关键词: %v\n", 
+			parsed.Answer, parsed.Keywords)
+	} else {
+		fmt.Printf("【原始输出】\n%s\n", rawOutput)
+	}
 }
